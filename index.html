@@ -1,109 +1,103 @@
 <!DOCTYPE html>
 <html lang="en-us">
-<head>
+  <head>
     <meta charset="utf-8">
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
     <title>Unity WebGL Player | go</title>
-    <!-- 添加必要的 CSP 頭部 -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self' https: data: gap: wss:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; style-src 'self' 'unsafe-inline' https:; connect-src *">
     <link rel="shortcut icon" href="TemplateData/favicon.ico">
     <link rel="stylesheet" href="TemplateData/style.css">
-</head>
-<body>
-    <!-- 添加 GPS 權限提示覆蓋層 -->
-    <div id="gps-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); z-index:9999; display:flex; justify-content:center; align-items:center;">
-        <div style="background:white; padding:20px; border-radius:10px; text-align:center;">
-            <h2>需要位置權限</h2>
-            <p>此應用需要訪問您的位置以提供完整功能</p>
-            <button id="enable-gps-btn" style="padding:10px 20px; background:#4CAF50; color:white; border:none; border-radius:5px; cursor:pointer;">
-                允許位置訪問
-            </button>
+    <link rel="manifest" href="manifest.webmanifest">
+  </head>
+  <body>
+    <div id="unity-container">
+      <canvas id="unity-canvas" width=960 height=600 tabindex="-1"></canvas>
+      <div id="unity-loading-bar">
+        <div id="unity-logo"></div>
+        <div id="unity-progress-bar-empty">
+          <div id="unity-progress-bar-full"></div>
         </div>
+      </div>
+      <div id="unity-warning"> </div>
     </div>
-
-    <!-- 原有 Unity 容器 -->
-    <div id="unity-container" class="unity-desktop">
-        <!-- 原有內容保持不變 -->
-    </div>
-
     <script>
-        // 全局變量存儲 Unity 實例
-        var unityInstance = null;
-        
-        // 當頁面完全加載後
-        window.addEventListener('load', function() {
-            // 顯示 GPS 權限請求覆蓋層
-            document.getElementById('gps-overlay').style.display = 'flex';
-            
-            // 綁定按鈕點擊事件
-            document.getElementById('enable-gps-btn').addEventListener('click', function() {
-                requestGPSPermission();
-                document.getElementById('gps-overlay').style.display = 'none';
-            });
-            
-            // 原有 Unity 加載代碼...
-        });
-
-        // GPS 權限請求函數
-        function requestGPSPermission() {
-            if (!navigator.geolocation) {
-                console.error("Geolocation is not supported by this browser.");
-                return;
-            }
-            
-            // 高精度模式，適用於移動設備
-            var options = {
-                enableHighAccuracy: true,
-                timeout: 10000,
-                maximumAge: 0
-            };
-            
-            navigator.geolocation.getCurrentPosition(
-                function(position) {
-                    // 成功獲取位置
-                    console.log("Position acquired:", position);
-                    
-                    // 將位置數據發送到 Unity
-                    if (unityInstance) {
-                        var coords = {
-                            latitude: position.coords.latitude,
-                            longitude: position.coords.longitude,
-                            accuracy: position.coords.accuracy
-                        };
-                        unityInstance.SendMessage('GPSController', 'OnLocationReceived', JSON.stringify(coords));
-                    }
-                },
-                function(error) {
-                    // 處理錯誤
-                    console.error("Error getting location:", error);
-                    
-                    // 根據錯誤代碼提供用戶反饋
-                    var errorMsg = "無法獲取位置: ";
-                    switch(error.code) {
-                        case error.PERMISSION_DENIED:
-                            errorMsg += "用戶拒絕了位置權限請求";
-                            break;
-                        case error.POSITION_UNAVAILABLE:
-                            errorMsg += "位置信息不可用";
-                            break;
-                        case error.TIMEOUT:
-                            errorMsg += "獲取位置超時";
-                            break;
-                        case error.UNKNOWN_ERROR:
-                            errorMsg += "未知錯誤";
-                            break;
-                    }
-                    
-                    alert(errorMsg);
-                },
-                options
-            );
+      window.addEventListener("load", function () {
+        if ("serviceWorker" in navigator) {
+          navigator.serviceWorker.register("ServiceWorker.js");
         }
-        
-        // 暴露給 Unity 調用的函數
-        window.RequestGPSUpdate = function() {
-            requestGPSPermission();
-        };
+      });
+
+      var container = document.querySelector("#unity-container");
+      var canvas = document.querySelector("#unity-canvas");
+      var loadingBar = document.querySelector("#unity-loading-bar");
+      var progressBarFull = document.querySelector("#unity-progress-bar-full");
+      var warningBanner = document.querySelector("#unity-warning");
+
+      // Shows a temporary message banner/ribbon for a few seconds, or
+      // a permanent error message on top of the canvas if type=='error'.
+      // If type=='warning', a yellow highlight color is used.
+      // Modify or remove this function to customize the visually presented
+      // way that non-critical warnings and error messages are presented to the
+      // user.
+      function unityShowBanner(msg, type) {
+        function updateBannerVisibility() {
+          warningBanner.style.display = warningBanner.children.length ? 'block' : 'none';
+        }
+        var div = document.createElement('div');
+        div.innerHTML = msg;
+        warningBanner.appendChild(div);
+        if (type == 'error') div.style = 'background: red; padding: 10px;';
+        else {
+          if (type == 'warning') div.style = 'background: yellow; padding: 10px;';
+          setTimeout(function() {
+            warningBanner.removeChild(div);
+            updateBannerVisibility();
+          }, 5000);
+        }
+        updateBannerVisibility();
+      }
+
+      var buildUrl = "Build";
+      var loaderUrl = buildUrl + "/go_webgl.loader.js";
+      var config = {
+        dataUrl: buildUrl + "/go_webgl.data",
+        frameworkUrl: buildUrl + "/go_webgl.framework.js",
+        codeUrl: buildUrl + "/go_webgl.wasm",
+        streamingAssetsUrl: "StreamingAssets",
+        companyName: "DefaultCompany",
+        productName: "go",
+        productVersion: "1.0.2",
+        showBanner: unityShowBanner,
+      };
+
+      // By default Unity keeps WebGL canvas render target size matched with
+      // the DOM size of the canvas element (scaled by window.devicePixelRatio)
+      // Set this to false if you want to decouple this synchronization from
+      // happening inside the engine, and you would instead like to size up
+      // the canvas DOM size and WebGL render target sizes yourself.
+      // config.matchWebGLToCanvasSize = false;
+
+      if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
+        // Mobile device style: fill the whole browser client area with the game canvas:
+        var meta = document.createElement('meta');
+        meta.name = 'viewport';
+        meta.content = 'width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, shrink-to-fit=yes';
+        document.getElementsByTagName('head')[0].appendChild(meta);
+      }
+
+      loadingBar.style.display = "block";
+
+      var script = document.createElement("script");
+      script.src = loaderUrl;
+      script.onload = () => {
+        createUnityInstance(canvas, config, (progress) => {
+          progressBarFull.style.width = 100 * progress + "%";
+        }).then((unityInstance) => {
+          loadingBar.style.display = "none";
+        }).catch((message) => {
+          alert(message);
+        });
+      };
+      document.body.appendChild(script);
     </script>
-</body>
+  </body>
 </html>
