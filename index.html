@@ -7,6 +7,8 @@
     <link rel="shortcut icon" href="TemplateData/favicon.ico">
     <link rel="stylesheet" href="TemplateData/style.css">
     <link rel="manifest" href="manifest.webmanifest">
+    <!-- 添加必要的 CSP 策略以允許 GPS -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' data: gap: https://ssl.gstatic.com 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; media-src *; connect-src *">
   </head>
   <body>
     <div id="unity-container">
@@ -18,12 +20,23 @@
         </div>
       </div>
       <div id="unity-warning"> </div>
+      <!-- 添加 GPS 權限請求按鈕 -->
+      <button id="gps-permission-btn" style="display:none; position:absolute; top:10px; right:10px; z-index:1000; padding:10px; background:#4CAF50; color:white; border:none; border-radius:5px;">
+        允許位置訪問
+      </button>
     </div>
     <script>
+      // GPS 相關全局變量
+      var unityInstance = null;
+      var gpsPermissionGranted = false;
+
       window.addEventListener("load", function () {
         if ("serviceWorker" in navigator) {
           navigator.serviceWorker.register("ServiceWorker.js");
         }
+        
+        // 初始化 GPS 按鈕事件
+        document.getElementById('gps-permission-btn').addEventListener('click', requestGPSPermission);
       });
 
       var container = document.querySelector("#unity-container");
@@ -32,12 +45,6 @@
       var progressBarFull = document.querySelector("#unity-progress-bar-full");
       var warningBanner = document.querySelector("#unity-warning");
 
-      // Shows a temporary message banner/ribbon for a few seconds, or
-      // a permanent error message on top of the canvas if type=='error'.
-      // If type=='warning', a yellow highlight color is used.
-      // Modify or remove this function to customize the visually presented
-      // way that non-critical warnings and error messages are presented to the
-      // user.
       function unityShowBanner(msg, type) {
         function updateBannerVisibility() {
           warningBanner.style.display = warningBanner.children.length ? 'block' : 'none';
@@ -69,15 +76,7 @@
         showBanner: unityShowBanner,
       };
 
-      // By default Unity keeps WebGL canvas render target size matched with
-      // the DOM size of the canvas element (scaled by window.devicePixelRatio)
-      // Set this to false if you want to decouple this synchronization from
-      // happening inside the engine, and you would instead like to size up
-      // the canvas DOM size and WebGL render target sizes yourself.
-      // config.matchWebGLToCanvasSize = false;
-
       if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
-        // Mobile device style: fill the whole browser client area with the game canvas:
         var meta = document.createElement('meta');
         meta.name = 'viewport';
         meta.content = 'width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, shrink-to-fit=yes';
@@ -91,13 +90,78 @@
       script.onload = () => {
         createUnityInstance(canvas, config, (progress) => {
           progressBarFull.style.width = 100 * progress + "%";
-        }).then((unityInstance) => {
+        }).then((instance) => {
+          unityInstance = instance; // 保存 Unity 實例引用
           loadingBar.style.display = "none";
+          
+          // Unity 加載完成後顯示 GPS 按鈕
+          document.getElementById('gps-permission-btn').style.display = 'block';
         }).catch((message) => {
           alert(message);
         });
       };
       document.body.appendChild(script);
+
+      // GPS 權限請求函數
+      function requestGPSPermission() {
+        if (!navigator.geolocation) {
+          unityShowBanner("您的瀏覽器不支持地理位置功能", "error");
+          return;
+        }
+
+        navigator.geolocation.getCurrentPosition(
+          function(position) {
+            gpsPermissionGranted = true;
+            document.getElementById('gps-permission-btn').style.display = 'none';
+            
+            // 將位置數據發送到 Unity
+            if (unityInstance) {
+              var coords = {
+                latitude: position.coords.latitude,
+                longitude: position.coords.longitude,
+                accuracy: position.coords.accuracy,
+                altitude: position.coords.altitude,
+                altitudeAccuracy: position.coords.altitudeAccuracy,
+                heading: position.coords.heading,
+                speed: position.coords.speed
+              };
+              unityInstance.SendMessage('GPSController', 'OnLocationReceived', JSON.stringify(coords));
+            }
+          },
+          function(error) {
+            var errorMessage;
+            switch(error.code) {
+              case error.PERMISSION_DENIED:
+                errorMessage = "用戶拒絕了位置請求";
+                break;
+              case error.POSITION_UNAVAILABLE:
+                errorMessage = "位置信息不可用";
+                break;
+              case error.TIMEOUT:
+                errorMessage = "獲取位置請求超時";
+                break;
+              case error.UNKNOWN_ERROR:
+                errorMessage = "發生未知錯誤";
+                break;
+            }
+            unityShowBanner("獲取位置失敗: " + errorMessage, "error");
+          },
+          {
+            enableHighAccuracy: true,
+            timeout: 10000,
+            maximumAge: 0
+          }
+        );
+      }
+
+      // 暴露給 Unity 調用的函數
+      function RequestGPSFromUnity() {
+        if (!gpsPermissionGranted) {
+          document.getElementById('gps-permission-btn').style.display = 'block';
+        } else {
+          requestGPSPermission();
+        }
+      }
     </script>
   </body>
 </html>
